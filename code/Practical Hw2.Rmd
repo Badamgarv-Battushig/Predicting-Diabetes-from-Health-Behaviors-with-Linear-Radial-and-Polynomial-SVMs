@@ -1,0 +1,743 @@
+---
+title: "Predicting Diabetes from Health Behaviors with Linear, Radial, and Polynomial SVMs"
+author: "Badamgarav Battushig"
+date: "2026-04-26"
+output: html_document
+---
+
+### Health Behavior and Disease Prediction using Support Vector Machines
+
+#### Introduction
+
+This project studies whether demographic characteristics and daily health behaviors can be used to predict diabetes in the 2022 National Health Interview Survey (NHIS), accessed through IPUMS Health Surveys. The original dataset contains 35,115 observations and 48 variables covering demographics, disease indicators, and behavior measures such as work hours, smoking, physical activity, diet-related frequencies, and sleep. In this notebook, the target variable is `DIABETICEV`, recoded into a binary diabetes status outcome for adult respondents only. The three models compared are support vector machines with linear, radial (RBF), and polynomial kernels.
+
+The main predictors used in the models are age, sex, education, work hours, body mass index, cigarettes per day, moderate activity minutes, vigorous activity minutes, fruit intake, vegetable intake, and sleep hours. Because the diabetes classes are imbalanced, model performance is evaluated with more than accuracy alone. I report sensitivity, specificity, precision, F1 score, balanced accuracy, and AUC so that the models can be compared more fairly on the same test set.
+
+#### Theoretical Background
+
+A support vector machine (SVM) is a supervised learning method used for classification by finding a separating boundary between classes. In the linear case, the model searches for the hyperplane that maximizes the margin between the two classes while allowing some classification error through slack variables. 
+
+The tuning parameter `cost` controls the penalty for misclassification. Larger values of `cost` force the model to classify the training data more strictly, while smaller values allow a wider margin. When the data are not linearly separable, kernels can be used to create more flexible boundaries. In this homework, I compare three kernels: linear, radial, and polynomial. The linear SVM is fit with `kernel = "linear"` and tuned over `cost`. The radial SVM is fit with `kernel = "radial"` and tuned over both `cost` and `gamma`, where `gamma` controls how local or flexible the boundary becomes. The polynomial SVM is fit with `kernel = "polynomial"` and tuned over `cost`, `degree`, and `coef0`. These tuning parameters are important because very flexible models may overfit, while models that are too simple may miss useful patterns in the data.
+
+All three models are fit using the `svm()` function from the `e1071` package. Hyperparameters are selected with `tune()` using cross-validation on a tuning subset of the training data. Final model performance is then evaluated on a held-out test set using confusion-matrix based metrics and AUC. This setup separates model selection from model evaluation and makes the comparison across kernels more reproducible.
+
+#### Methodology
+
+The data preparation process began by loading the NHIS dataset and examining its size, variable names, and structure. This analysis focuses on adults, the adult sample flag was used to restrict the data to adult respondents only. A set of demographic and behavior variables was selected for modeling: age, sex, education, work hours, body mass index, smoking, moderate activity, vigorous activity, fruit intake, vegetable intake, and sleep hours. Special survey codes such as `7`, `9`, `96`, `98`, `99`, `996`, `997`, `998`, and `999` were treated as non-substantive responses and replaced with `NA` where appropriate. After cleaning, incomplete observations were removed with `na.omit()`. The cleaned data were then split into training and testing sets using a 70/30 random split with `set.seed(123)` so the results can be reproduced. Support vector machines were then fit using the `svm()` function from the `e1071` package. As in the lecture and lab examples, I use direct model fitting, visual inspection for a two-variable example, and `tune()` for model selection.
+
+Because the NHIS dataset is fairly large and support vector machines can be computationally expensive, especially for radial and polynomial kernels, the tuning stage uses a smaller stratified subset of the training data called `tune_data`. This subset keeps all diabetes cases and a sample of non-diabetes cases so that the class structure is preserved while reducing runtime. After the best hyperparameters are selected, the final chosen model for each kernel is refit on the full training dataset before evaluating performance on the test dataset.
+
+Because support vector machines create separating hyperplanes, it is important not to leave numerically-coded categories as if they were continuous measurements. In this notebook, `Sex` was recoded into factor levels and `Education` was collapsed into broad factor groups rather than leaving the original numeric survey codes in the model. This prevents the SVM from treating category codes as though the distances between them were mathematically meaningful.
+
+The cleaning choices are intended to make the data usable for SVM classification rather than to create a nationally representative weighted analysis. For example, special response codes are treated as missing, complete-case analysis is used for simplicity, and categorical survey codes are recoded into factors so that the model geometry matches the meaning of the variables.
+
+### Data Type Comparison
+
+The same set of demographic and health behavior predictors was used across all three SVM models. The response variable is binary diabetes status, while the predictors include a mix of numeric and categorical inputs. Since support vector machines require careful treatment of input values, categorical variables were converted to factors and survey special codes were removed before fitting the models.
+
+**Original dataset size: 35,115 rows and 48 columns**  
+**Adult sample size before complete-case filtering: 27,651 rows**  
+**Target outcome for this notebook: `DIABETICEV`**
+
+---
+
+### Load Required Libraries
+
+```{r}
+library(tidyverse)
+library(e1071)
+library(caret)
+library(pROC)
+library(dplyr)
+```
+
+---
+
+### Load Dataset
+
+```{r}
+nhis_data <- read_csv("C:/Users/badam/Downloads/nhis_2022.csv", show_col_types = FALSE)
+head(nhis_data)
+```
+
+---
+
+### Understanding the Dataset
+
+The dataset `nhis_data` is used as the main dataset for this analysis. It includes survey identifiers, demographic variables, disease indicators, and multiple health behavior variables.
+
+```{r}
+# check dataset size
+dim(nhis_data)
+
+# inspect structure
+str(nhis_data)
+
+# summary statistics
+summary(nhis_data)
+
+# column names
+colnames(nhis_data)
+```
+
+#### Data Dictionary (Selected Variables)
+
+The variables below are the main variables used for the support vector machine analysis.
+
+`DIABETICEV` - Diabetes status (1 = No, 2 = Yes)  
+`AGE` - Age in years  
+`SEX` - Sex (1 = Male, 2 = Female)  
+`EDUC` - Education code  
+`HOURSWRK` - Hours worked per week  
+`BMICALC` - Calculated BMI  
+`CIGDAYMO` - Cigarettes smoked per day  
+`MOD10DMIN` - Minutes of moderate activity  
+`VIG10DMIN` - Minutes of vigorous activity  
+`FRUTNO` - Fruit intake frequency  
+`VEGENO` - Vegetable intake frequency  
+`HRSLEEP` - Hours of sleep  
+`ASTATFLG` - Adult sample flag  
+
+---
+
+### Renaming the Variables
+
+```{r}
+nhis_data <- nhis_data %>%
+  rename(
+    Diabetes_status = DIABETICEV,
+    Age = AGE,
+    Sex = SEX,
+    Education = EDUC,
+    Work_hours = HOURSWRK,
+    BMI = BMICALC,
+    Cigarettes_per_day = CIGDAYMO,
+    Moderate_activity_minutes = MOD10DMIN,
+    Vigorous_activity_minutes = VIG10DMIN,
+    Fruit_intake = FRUTNO,
+    Vegetable_intake = VEGENO,
+    Sleep_hours = HRSLEEP,
+    Adult_flag = ASTATFLG
+  )
+```
+
+---
+
+### Data Cleaning
+
+Select Variables for Analysis
+
+```{r}
+nhis_model_data <- nhis_data[, c(
+  "Diabetes_status",
+  "Age",
+  "Sex",
+  "Education",
+  "Work_hours",
+  "BMI",
+  "Cigarettes_per_day",
+  "Moderate_activity_minutes",
+  "Vigorous_activity_minutes",
+  "Fruit_intake",
+  "Vegetable_intake",
+  "Sleep_hours",
+  "Adult_flag"
+)]
+
+# check structure
+str(nhis_model_data)
+```
+
+```{r}
+# Keep adults only
+nhis_model_data <- nhis_model_data %>%
+  filter(Adult_flag == 1)
+
+# check the size after adult filtering
+dim(nhis_model_data)
+```
+
+```{r}
+# Recode survey response values before removing incomplete observations
+
+nhis_model_data <- nhis_model_data %>%
+  mutate(
+    Diabetes_status = case_when(
+      Diabetes_status == 1 ~ "No",
+      Diabetes_status == 2 ~ "Yes",
+      TRUE ~ NA_character_
+    ),
+    Diabetes_status = as.factor(Diabetes_status),
+    Sex = case_when(
+      Sex == 1 ~ "Male",
+      Sex == 2 ~ "Female",
+      TRUE ~ NA_character_
+    ),
+    Sex = as.factor(Sex),
+    Education = case_when(
+      Education >= 100 & Education < 200 ~ "Less_than_high_school",
+      Education >= 200 & Education < 300 ~ "High_school_or_GED",
+      Education >= 300 & Education < 400 ~ "Some_college",
+      Education >= 400 & Education < 500 ~ "Bachelors",
+      Education >= 500 & Education < 600 ~ "Graduate_degree",
+      TRUE ~ NA_character_
+    ),
+    Education = as.factor(Education),
+    Work_hours = ifelse(Work_hours %in% c(97, 98, 99), NA, Work_hours),
+    BMI = ifelse(BMI >= 996, NA, BMI),
+    Cigarettes_per_day = case_when(
+      Cigarettes_per_day == 96 ~ 0,
+      Cigarettes_per_day %in% c(97, 98, 99) ~ NA_real_,
+      TRUE ~ as.numeric(Cigarettes_per_day)
+    ),
+    Moderate_activity_minutes = ifelse(Moderate_activity_minutes >= 996, NA, Moderate_activity_minutes),
+    Vigorous_activity_minutes = ifelse(Vigorous_activity_minutes >= 996, NA, Vigorous_activity_minutes),
+    Fruit_intake = ifelse(Fruit_intake >= 996, NA, Fruit_intake),
+    Vegetable_intake = ifelse(Vegetable_intake >= 996, NA, Vegetable_intake),
+    Sleep_hours = ifelse(Sleep_hours %in% c(98, 99), NA, Sleep_hours)
+  )
+
+# check how many missing values were created
+colSums(is.na(nhis_model_data))
+```
+
+```{r}
+# remove incomplete observations for modeling
+nhis_model_data <- na.omit(nhis_model_data)
+
+# remove adult flag after filtering
+nhis_model_data <- nhis_model_data %>%
+  select(-Adult_flag)
+
+# check the size of the cleaned dataset
+dim(nhis_model_data)
+```
+
+The original dataset contained 35,115 observations and 48 variables. After restricting to adults and selecting the variables used in this homework, the working dataset became smaller. Special survey codes were converted to missing values, and incomplete observations were removed with `na.omit()`. This cleaned dataset is the final dataset used for SVM modeling.
+
+In particular, the numerically-coded categorical variables were not left in their original numeric form. `Sex` was converted to a factor with levels for male and female, and `Education` was converted into grouped factor levels. This step is important because SVMs depend on distances in predictor space, and raw survey category codes should not be interpreted as if they were measured quantities.
+
+More specifically, the cleaning rules were: `DIABETICEV` was recoded to `No/Yes`; `SEX` was recoded to `Male/Female`; `EDUC` was grouped into broad education categories; `HOURSWRK` values `97`, `98`, and `99` were treated as missing; `BMICALC` values `996` and above were treated as missing; `CIGDAYMO = 96` was interpreted as zero cigarettes and `97`, `98`, `99` were treated as missing; activity and food frequency variables with codes `996` and above were treated as missing; and `HRSLEEP` values `98` and `99` were treated as missing. These recoding choices should allow another reader to reproduce the data preparation exactly.
+
+```{r}
+# Check class distribution
+table(nhis_model_data$Diabetes_status)
+
+# check proportions
+prop.table(table(nhis_model_data$Diabetes_status))
+```
+
+**The dataset is imbalanced, with many more respondents without diabetes than respondents with diabetes. This means model accuracy should be interpreted carefully.**
+
+---
+
+### Impact of Cleaning
+
+```{r}
+raw_rows <- nrow(nhis_data)
+adult_rows <- nhis_data %>% filter(Adult_flag == 1) %>% nrow()
+final_rows <- nrow(nhis_model_data)
+
+cleaning_summary <- tibble(
+  Stage = c("Original dataset", "Adult sample", "Final complete-case dataset"),
+  Rows = c(raw_rows, adult_rows, final_rows)
+)
+
+cleaning_summary
+```
+
+This table shows how the dataset changed during cleaning. The biggest reductions come from restricting the analysis to adults and then removing incomplete observations after recoding the non-substantive survey responses.
+
+Using complete-case analysis makes the modeling pipeline straightforward, but it also reduces the sample size and may change the distribution of the remaining observations. This tradeoff should be kept in mind when interpreting the final model results.
+
+---
+
+### Support Vector Machine
+
+In order to fit an SVM using different kernels, I use the `svm()` function from the `e1071` package. To fit a linear support vector classifier I use `kernel = "linear"`. To fit a radial SVM I use `kernel = "radial"`. To fit a polynomial SVM I use `kernel = "polynomial"`, together with a choice of polynomial degree. As in the professor's examples, the models are fit directly and then compared using test-set predictions.
+
+### Tuning Justification
+
+The tuning process is designed to compare the three kernels fairly while keeping computation feasible on this dataset. The linear model tunes only `cost` because that is the main complexity control for a linear margin. The radial model tunes both `cost` and `gamma` because `cost` controls the misclassification penalty and `gamma` controls how flexible the nonlinear boundary becomes. The polynomial model tunes `cost`, `degree`, and `coef0` because those parameters determine both the penalty level and the shape of the polynomial kernel.
+
+I use 5-fold cross-validation on the stratified tuning sample so that each kernel is tuned under the same resampling structure. The parameter grids are narrower than a very large exhaustive search because the NHIS dataset is large enough that an overly broad grid would create unnecessary runtime without adding much practical value for this assignment.
+
+```{r}
+tuning_summary <- tibble(
+  Model = c("Linear kernel", "Radial kernel", "Polynomial kernel"),
+  Tuned_parameters = c(
+    "cost",
+    "cost, gamma",
+    "cost, degree, coef0"
+  ),
+  Candidate_values = c(
+    "cost = 0.1, 1, 5",
+    "cost = 0.1, 1, 5; gamma = 0.001, 0.01, 0.05",
+    "cost = 0.1, 1, 5; degree = 2, 3; coef0 = 0, 1"
+  ),
+  Validation_method = c(
+    "5-fold cross-validation",
+    "5-fold cross-validation",
+    "5-fold cross-validation"
+  )
+)
+
+tuning_summary
+```
+
+```{r}
+# Train/Test Split
+set.seed(123)
+
+train <- sample(1:nrow(nhis_model_data), round(0.7 * nrow(nhis_model_data)))
+train_data <- nhis_model_data[train, ]
+test_data <- nhis_model_data[-train, ]
+
+# Use a smaller stratified subset for tuning to reduce compute time.
+# Final evaluation is still done on the full test set.
+set.seed(123)
+
+yes_tune <- train_data %>%
+  filter(Diabetes_status == "Yes")
+
+no_tune <- train_data %>%
+  filter(Diabetes_status == "No") %>%
+  slice_sample(n = min(nrow(.), 4000))
+
+tune_data <- bind_rows(yes_tune, no_tune)
+
+# check sizes
+dim(train_data)
+dim(test_data)
+dim(tune_data)
+```
+
+After splitting, the training dataset will be used to fit and tune the models, while the testing dataset will be used to evaluate prediction performance on unseen data. Because support vector machines can be slow on large datasets, I use a smaller stratified tuning sample to select reasonable hyperparameters and then evaluate the final chosen models on the full test set.
+
+This tuning strategy is used for computational efficiency. It preserves the main class structure during model selection while keeping the final test-set evaluation separate and consistent across all three kernels.
+
+---
+
+### Linear Kernel
+
+The linear kernel is the simplest support vector classifier. It creates a separating hyperplane in the original predictor space. This is a useful baseline because it lets us see whether the relationship between the predictors and diabetes status can be captured using a linear boundary.
+
+```{r}
+svmlinear <- svm(
+  Diabetes_status ~ .,
+  data = train_data,
+  type = "C-classification",
+  kernel = "linear",
+  cost = 1,
+  scale = TRUE
+)
+
+summary(svmlinear)
+```
+
+In the linear case, the main tuning parameter is `cost`. A small value of `cost` allows a wider margin and more classification errors, while a large value of `cost` tries to reduce training errors more aggressively.
+
+To keep runtime reasonable, the tuning grid for the linear kernel is kept narrow and cross-validation is set to 5 folds. This still provides a principled way to compare cost values while avoiding unnecessary computation on a large dataset.
+
+```{r}
+# Tune Linear SVM Model use cross-validation to choose the best cost
+
+set.seed(123)
+
+tune_linear <- tune(
+  svm,
+  Diabetes_status ~ .,
+  data = tune_data,
+  kernel = "linear",
+  ranges = list(cost = c(0.1, 1, 5)),
+  tunecontrol = tune.control(cross = 5)
+)
+
+summary(tune_linear)
+```
+
+```{r}
+# Best linear model
+
+best_linear_model <- svm(
+  Diabetes_status ~ .,
+  data = train_data,
+  type = "C-classification",
+  kernel = "linear",
+  cost = tune_linear$best.parameters$cost,
+  scale = TRUE
+)
+
+table(
+  true = test_data$Diabetes_status,
+  pred = predict(best_linear_model, newdata = test_data)
+)
+```
+
+```{r}
+# Linear model metrics
+
+linear_pred <- predict(best_linear_model, newdata = test_data)
+linear_cm <- confusionMatrix(linear_pred, test_data$Diabetes_status, positive = "Yes")
+
+linear_scores_model <- svm(
+  Diabetes_status ~ .,
+  data = train_data,
+  type = "C-classification",
+  kernel = "linear",
+  cost = tune_linear$best.parameters$cost,
+  scale = TRUE,
+  decision.values = TRUE
+)
+
+linear_scores <- attributes(
+  predict(linear_scores_model, test_data, decision.values = TRUE)
+)$decision.values
+
+linear_auc <- roc(test_data$Diabetes_status, as.numeric(linear_scores), levels = c("No", "Yes"))$auc
+
+linear_cm
+linear_auc
+```
+
+This table shows the test-set predictions for the linear SVM. The linear model had accuracy of about `0.895`, but that high accuracy is misleading because the dataset is imbalanced. Its sensitivity was `0.000`, meaning it failed to identify any of the `751` diabetes cases in the test set. The model predicted every observation as `No`, which gave it perfect specificity of `1.000` for the majority class but balanced accuracy of only `0.500`. Its AUC of about `0.556` shows that the linear model had only weak ability to separate diabetes from non-diabetes cases.
+
+---
+
+### Radial (RBF) Kernel
+
+The radial kernel allows for a nonlinear decision boundary. In the professor's examples, this kernel is fit by specifying `kernel = "radial"` and then selecting values of both `cost` and `gamma`. This makes the radial SVM more flexible than the linear model.
+
+```{r}
+svmradial <- svm(
+  Diabetes_status ~ .,
+  data = train_data,
+  type = "C-classification",
+  kernel = "radial",
+  gamma = 0.01,
+  cost = 1,
+  scale = TRUE
+)
+
+summary(svmradial)
+```
+
+The `gamma` parameter controls how local and flexible the radial boundary becomes. Larger values of `gamma` can create more irregular boundaries, while smaller values create smoother boundaries.
+
+Because the radial kernel is more computationally expensive than the linear kernel, I use a smaller tuning grid and 5-fold cross-validation on the stratified tuning sample. This gives a practical balance between model search and computation time.
+
+```{r}
+# Tune Radial SVM Model use cross-validation to choose cost and gamma
+
+set.seed(123)
+
+tune_radial <- tune(
+  svm,
+  Diabetes_status ~ .,
+  data = tune_data,
+  kernel = "radial",
+  ranges = list(
+    cost = c(0.1, 1, 5),
+    gamma = c(0.001, 0.01, 0.05)
+  ),
+  tunecontrol = tune.control(cross = 5)
+)
+
+summary(tune_radial)
+```
+
+```{r}
+# Best radial model
+
+best_radial_model <- svm(
+  Diabetes_status ~ .,
+  data = train_data,
+  type = "C-classification",
+  kernel = "radial",
+  gamma = tune_radial$best.parameters$gamma,
+  cost = tune_radial$best.parameters$cost,
+  scale = TRUE
+)
+
+table(
+  true = test_data$Diabetes_status,
+  pred = predict(best_radial_model, newdata = test_data)
+)
+```
+
+```{r}
+# Radial model metrics
+
+radial_pred <- predict(best_radial_model, newdata = test_data)
+radial_cm <- confusionMatrix(radial_pred, test_data$Diabetes_status, positive = "Yes")
+
+svmfit_opt <- svm(
+  Diabetes_status ~ .,
+  data = train_data,
+  type = "C-classification",
+  kernel = "radial",
+  gamma = tune_radial$best.parameters$gamma,
+  cost = tune_radial$best.parameters$cost,
+  scale = TRUE,
+  decision.values = TRUE
+)
+
+radial_scores <- attributes(
+  predict(svmfit_opt, test_data, decision.values = TRUE)
+)$decision.values
+
+radial_auc <- roc(test_data$Diabetes_status, as.numeric(radial_scores), levels = c("No", "Yes"))$auc
+
+radial_cm
+radial_auc
+```
+
+This table shows the test-set predictions for the radial SVM. The radial model had accuracy of about `0.895`, which again looks high because most respondents are in the `No diabetes` class. Its sensitivity was only about `0.001`, meaning it correctly identified just `1` diabetes case out of `751` true diabetes cases. At the same time, its specificity was about `0.999`, so it classified the non-diabetes group very well. The balanced accuracy of about `0.500` shows that class-balanced performance was still extremely weak, even though the AUC improved to about `0.648`. This means the radial kernel ranked cases somewhat better than the linear model, but it still performed very poorly as a practical diabetes detection model.
+
+---
+
+### Polynomial Kernel
+
+The polynomial kernel is another way to create a nonlinear decision boundary. In the professor's examples, this model is fit by specifying `kernel = "polynomial"` and choosing a polynomial degree together with the cost parameter.
+
+```{r}
+svmpoly <- svm(
+  Diabetes_status ~ .,
+  data = train_data,
+  type = "C-classification",
+  kernel = "polynomial",
+  degree = 2,
+  coef0 = 1,
+  cost = 1,
+  scale = TRUE
+)
+
+summary(svmpoly)
+```
+
+The degree parameter controls the complexity of the polynomial boundary. Higher-degree polynomials can fit more complicated shapes, but they may also overfit the training data.
+
+The polynomial kernel can also be slow to tune, so again I restrict the grid to a smaller set of reasonable `cost`, `degree`, and `coef0` values and use 5-fold cross-validation on the stratified tuning sample. This makes the model comparison feasible while still demonstrating kernel tuning.
+
+```{r}
+# Tune Polynomial SVM Model use cross-validation to choose the best settings
+
+set.seed(123)
+
+tune_poly <- tune(
+  svm,
+  Diabetes_status ~ .,
+  data = tune_data,
+  kernel = "polynomial",
+  ranges = list(
+    cost = c(0.1, 1, 5),
+    degree = c(2, 3),
+    coef0 = c(0, 1)
+  ),
+  tunecontrol = tune.control(cross = 5)
+)
+
+summary(tune_poly)
+```
+
+```{r}
+# Best polynomial model
+
+best_poly_model <- svm(
+  Diabetes_status ~ .,
+  data = train_data,
+  type = "C-classification",
+  kernel = "polynomial",
+  degree = tune_poly$best.parameters$degree,
+  coef0 = tune_poly$best.parameters$coef0,
+  cost = tune_poly$best.parameters$cost,
+  scale = TRUE
+)
+
+table(
+  true = test_data$Diabetes_status,
+  pred = predict(best_poly_model, newdata = test_data)
+)
+```
+
+```{r}
+# Polynomial model metrics
+
+poly_pred <- predict(best_poly_model, newdata = test_data)
+poly_cm <- confusionMatrix(poly_pred, test_data$Diabetes_status, positive = "Yes")
+
+poly_scores_model <- svm(
+  Diabetes_status ~ .,
+  data = train_data,
+  type = "C-classification",
+  kernel = "polynomial",
+  degree = tune_poly$best.parameters$degree,
+  coef0 = tune_poly$best.parameters$coef0,
+  cost = tune_poly$best.parameters$cost,
+  scale = TRUE,
+  decision.values = TRUE
+)
+
+poly_scores <- attributes(
+  predict(poly_scores_model, test_data, decision.values = TRUE)
+)$decision.values
+
+poly_auc <- roc(test_data$Diabetes_status, as.numeric(poly_scores), levels = c("No", "Yes"))$auc
+
+poly_cm
+poly_auc
+```
+
+This table shows the test-set predictions for the polynomial SVM. The polynomial model had accuracy of about `0.894`, sensitivity of about `0.007`, and specificity of about `0.998`. In the test set, it correctly identified `5` diabetes cases out of `751`, which is better than the linear and radial models but still extremely low. Its balanced accuracy was about `0.502`, the highest of the three kernels, and its AUC was about `0.681`, also the best of the three models. Even so, the polynomial model still missed almost all true diabetes cases, so its practical classification performance remained weak despite being the strongest of the tested kernels.
+
+---
+
+### Model Evaluation
+
+This section reports the evaluation results from the held-out test set. The purpose here is only to present the model outputs in a clear format. Interpretation of why one model may perform better than another is reserved for the later discussion section.
+
+```{r}
+# Compare model performance across all three kernels
+
+model_results <- tibble(
+  Model = c("Linear kernel", "Radial kernel", "Polynomial kernel"),
+  Accuracy = c(
+    as.numeric(linear_cm$overall["Accuracy"]),
+    as.numeric(radial_cm$overall["Accuracy"]),
+    as.numeric(poly_cm$overall["Accuracy"])
+  ),
+  Sensitivity = c(
+    as.numeric(linear_cm$byClass["Sensitivity"]),
+    as.numeric(radial_cm$byClass["Sensitivity"]),
+    as.numeric(poly_cm$byClass["Sensitivity"])
+  ),
+  Specificity = c(
+    as.numeric(linear_cm$byClass["Specificity"]),
+    as.numeric(radial_cm$byClass["Specificity"]),
+    as.numeric(poly_cm$byClass["Specificity"])
+  ),
+  Precision = c(
+    as.numeric(linear_cm$byClass["Pos Pred Value"]),
+    as.numeric(radial_cm$byClass["Pos Pred Value"]),
+    as.numeric(poly_cm$byClass["Pos Pred Value"])
+  ),
+  F1 = c(
+    as.numeric(linear_cm$byClass["F1"]),
+    as.numeric(radial_cm$byClass["F1"]),
+    as.numeric(poly_cm$byClass["F1"])
+  ),
+  Balanced_Accuracy = c(
+    as.numeric(linear_cm$byClass["Balanced Accuracy"]),
+    as.numeric(radial_cm$byClass["Balanced Accuracy"]),
+    as.numeric(poly_cm$byClass["Balanced Accuracy"])
+  ),
+  AUC = c(
+    as.numeric(linear_auc),
+    as.numeric(radial_auc),
+    as.numeric(poly_auc)
+  )
+)
+
+model_results
+```
+
+The table above reports the same set of metrics for all three kernels on the same test set. The linear kernel achieved the highest raw accuracy, but it did so by predicting only the majority `No diabetes` class. The radial and polynomial kernels slightly improved sensitivity and AUC, with the polynomial kernel performing best by balanced accuracy and AUC. However, all three models had balanced accuracy values near `0.50` and very low sensitivity, which means that none of the models performed well at identifying diabetes cases.
+
+```{r}
+best_model_summary <- model_results %>%
+  arrange(desc(Balanced_Accuracy), desc(AUC)) %>%
+  slice(1)
+
+best_model_summary
+```
+
+Based on balanced accuracy and AUC, the polynomial kernel is the best of the three tested models. However, the differences are small and all three models perform poorly at identifying diabetes cases.
+
+```{r}
+# Create a simple comparison plot
+
+model_results_long <- model_results %>%
+  pivot_longer(
+    cols = -Model,
+    names_to = "Metric",
+    values_to = "Value"
+  )
+
+ggplot(model_results_long, aes(x = Model, y = Value, fill = Model)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ Metric, scales = "free_y") +
+  theme_minimal() +
+  labs(
+    title = "SVM Model Comparison",
+    x = "Model",
+    y = "Value"
+  )
+```
+
+The bar charts provide a visual comparison of each model across the reported metrics.
+
+---
+
+### Model Comparison and Interpretation
+
+The goal is to explain what the pattern of the results demonstrates about diabetes prediction in this dataset.
+
+The final comparison table shows that the polynomial kernel performed best by balanced accuracy and AUC, with balanced accuracy of about `0.502` and AUC of about `0.681`. The radial kernel was slightly behind it, with balanced accuracy of about `0.500` and AUC of about `0.648`, while the linear kernel had balanced accuracy of `0.500` and AUC of about `0.556`. This pattern shows that a nonlinear boundary helps somewhat, but only modestly.
+
+At the same time, the most important finding is that all three models have extremely weak sensitivity. The linear kernel identified no diabetes cases at all, the radial kernel had sensitivity of about `0.001`, and the polynomial kernel had sensitivity of only about `0.007`. In practice, this means the models are predicting the majority `No diabetes` class almost all the time and are missing most of the true diabetes cases. Because of that, the high accuracy values near `0.894` to `0.895` are misleading and mostly reflect class imbalance rather than strong classification performance.
+
+Based on the descriptive summaries and the decision-boundary plot, age and BMI appear to be among the stronger predictors because diabetes prevalence rises with age and with higher body mass index in the cleaned sample. Lower moderate and vigorous activity also appear associated with diabetes status, and work hours differ across groups as well. These patterns make substantive sense, but they do not overcome the model’s difficulty in identifying the positive class.
+
+Because the data are observational survey data, predictive relationships should not be interpreted as causal effects. In addition, some demographic variables may improve prediction while also raising interpretation and fairness questions.
+
+---
+
+### Metrics Meaning
+
+Accuracy measures the overall proportion of correct classifications. Sensitivity measures how well the model identifies respondents who have diabetes. Specificity measures how well the model identifies respondents who do not have diabetes. Precision shows how many of the predicted diabetes cases are truly positive. The F1 score combines precision and sensitivity. Balanced accuracy is helpful when the classes are imbalanced because it averages sensitivity and specificity. AUC measures how well the model ranks positive cases above negative cases across possible classification thresholds.
+
+---
+
+### SVM Decision Boundary Plot
+
+The assignment requires at least one example SVM decision boundary plot using two strong predictor variables. Following the professor's style, the plot below uses a direct `svm()` fit with two variables and then uses `plot()` to display the decision boundary.
+
+```{r}
+# create a smaller two-variable dataset for the decision boundary plot
+
+svm_plot_data <- nhis_model_data[, c("Diabetes_status", "Age", "BMI")]
+
+set.seed(123)
+plot_train <- sample(1:nrow(svm_plot_data), min(2000, nrow(svm_plot_data)))
+
+svm_boundary_model <- svm(
+  Diabetes_status ~ Age + BMI,
+  data = svm_plot_data[plot_train, ],
+  type = "C-classification",
+  kernel = "radial",
+  gamma = 0.01,
+  cost = 1
+)
+
+plot(svm_boundary_model, svm_plot_data[plot_train, ], BMI ~ Age)
+```
+
+This plot shows how the SVM separates the two classes using Age and BMI. The boundary is nonlinear, indicating that the relationship between these variables and diabetes is not purely linear. However, the overlap between classes helps explain why the model struggles to correctly identify diabetes cases.
+
+---
+
+### Critical Thinking
+
+This analysis shows how demographic and health behavior variables can be used to predict disease status, but several limitations remain. First, the NHIS is a survey dataset, so weighted national claims should be made cautiously. Second, complete-case analysis removes observations and may change the makeup of the sample. Third, some predictors may reflect the effects of disease rather than being clear risk factors. For example, lower work hours or lower activity may happen after a diabetes diagnosis rather than before it. Fourth, model performance is shaped by class imbalance, so even a model with good accuracy may still miss many true diabetes cases.
+
+That limitation is especially important here because the final SVM models have sensitivity values near zero and balanced accuracy values only slightly above `0.50`. This means the models do a good job identifying the majority `No diabetes` class but do a poor job detecting respondents who actually have diabetes. From an applied point of view, that is a serious weakness because the positive cases are often the ones of greatest interest in a health-screening setting.
+
+There are also ethical considerations. Predictors such as sex or education may help improve classification, but they also reflect broader social and structural inequalities. A model that uses these variables for prediction should not be interpreted as blaming individuals for disease risk. If this kind of model were ever used for decision-making, fairness, transparency, and the possibility of reinforcing existing disparities would need careful attention.
+
+---
+
+### Conclusion
+
+This notebook compares linear, radial, and polynomial support vector machines for predicting diabetes in the NHIS adult sample. The polynomial kernel was the best of the three tested models by balanced accuracy and AUC, but its advantage was small and its sensitivity remained extremely low. As a result, the main conclusion is not that the SVMs performed strongly, but that all three models mostly predicted the majority `No diabetes` class and missed many true diabetes cases.
+
+In practical terms, the descriptive patterns still illustrate that age, BMI, and physical activity are important correlates of diabetes in this dataset, so prevention efforts focused on obesity, physical activity, and older adults remain sensible. However, the current SVM models are not strong screening tools for diabetes detection because they fail to capture the positive class well. Any real-world use would need improved handling of class imbalance, careful fairness review, and clear recognition that these are predictive associations rather than causal effects.
