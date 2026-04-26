@@ -1,100 +1,84 @@
-Project Title:
+# Predicting Diabetes from Health Behaviors using Support Vector Machines
 
-Predicting Diabetes from Health Behaviors using Support Vector Machines
+---
 
+## Overview
+This project explores the use of **Support Vector Machines (SVMs)** to predict diabetes status using data from the **National Health Interview Survey (NHIS)** via IPUMS Health Surveys.  
+The goal is to understand how **demographics and health behaviors** relate to diabetes outcomes.
 
+---
 
-Overview:
+## Dataset
+- Source: NHIS (IPUMS Health Surveys)
+- Focus: Adult respondents only  
+- Target variable: `DIABETICEV` → recoded to **Yes / No diabetes**
+- Includes:
+  - Demographics (age, sex, education)
+  - Health behaviors (activity, diet, smoking, sleep)
+  - Health indicators (BMI, work hours)
 
-This project explores the use of support vector machines (SVMs) to predict diabetes status using data from the National Health Interview Survey (NHIS), accessed through IPUMS Health Surveys. The analysis focuses on understanding how demographic characteristics and health behaviors relate to diabetes outcomes.
+---
 
-
-
-Dataset:
-
-The dataset contains survey responses on demographics, health conditions, and lifestyle behaviors such as physical activity, diet, smoking, work hours, and sleep. The target variable (DIABETICEV) was recoded into a binary outcome indicating diabetes status (Yes/No). The analysis was restricted to adult respondents and cleaned to remove missing or non-substantive values.
-
-
-
-Models Used:
-
+## Models Used
 Three SVM models were implemented and compared:
+- 🔹 Linear kernel  
+- 🔹 Radial (RBF) kernel  
+- 🔹 Polynomial kernel  
 
-\- Linear kernel
+---
 
-\- Radial (RBF) kernel
+## Methodology
+- Data cleaning and recoding
+- Removal of missing values (complete-case analysis)
+- Train-test split (**70% / 30%**)
+- Hyperparameter tuning (**5-fold cross-validation**)
+- Evaluation on a held-out test set
 
-\- Polynomial kernel
+---
 
+## Evaluation Metrics
+- Accuracy  
+- Sensitivity (Recall)  
+- Specificity  
+- Precision  
+- F1 Score  
+- Balanced Accuracy  
+- AUC (Area Under the Curve)
 
+---
 
-Methodology:
+## Results
+- Accuracy was high (~0.89), but **misleading due to class imbalance**
+- Sensitivity was **extremely low**, meaning most diabetes cases were missed
+- Polynomial kernel performed slightly better, but overall performance remained weak
 
-\- Data cleaning and recoding of categorical variables
+---
 
-\- Removal of missing values (complete-case analysis)
+## Key Findings
+- Age, BMI, and physical activity are strong predictors
+- Dataset is highly imbalanced (~10% diabetes cases)
+- Models favor the majority class (**No diabetes**)
 
-\- Train-test split (70% training, 30% testing)
+---
 
-\- Hyperparameter tuning using 5-fold cross-validation
+## Limitations
+- Class imbalance reduces model effectiveness  
+- Complete-case analysis reduces sample size  
+- Results are **predictive, not causal**
 
-\- Model evaluation on a held-out test set
+---
 
+## Conclusion
+SVMs are useful for comparing linear and nonlinear boundaries, but they performed poorly for diabetes detection in this dataset.  
+Future work should focus on:
+- Handling class imbalance
+- Exploring alternative models
 
+---
 
-Evaluation Metrics:
+## References
+- IPUMS Health Surveys, Minnesota Population Center (2022) – NHIS data (accessed via course GitHub)  
+- James et al. (2023), *An Introduction to Statistical Learning*  
+- Meyer et al. (2023), *e1071 R package*
 
-The following metrics were used to evaluate model performance:
-
-\- Accuracy
-
-\- Sensitivity (Recall)
-
-\- Specificity
-
-\- Precision
-
-\- F1 Score
-
-\- Balanced Accuracy
-
-\- Area Under the Curve (AUC)
-
-
-
-Results:
-
-All models achieved high accuracy (\~0.89), but this was driven by strong performance on the majority “No diabetes” class. Sensitivity was extremely low across all models, meaning most true diabetes cases were not identified. The polynomial kernel performed slightly better than the radial and linear models based on balanced accuracy and AUC, but overall performance remained weak.
-
-
-
-Key Findings:
-
-\- Age, BMI, and physical activity were among the strongest predictors of diabetes.
-
-\- The dataset was highly imbalanced (\~10% diabetes cases), which negatively affected model performance.
-
-\- Models tended to predict the majority class, leading to poor detection of diabetes cases.
-
-
-
-Limitations:
-
-\- Strong class imbalance limits model effectiveness
-
-\- Complete-case analysis reduces sample size and may introduce bias
-
-\- Observational data means results are predictive, not causal
-
-
-
-Conclusion:
-
-While SVMs provide a useful framework for comparing linear and nonlinear decision boundaries, they performed poorly as practical tools for diabetes detection in this dataset. Future improvements could include better handling of class imbalance and alternative modeling approaches.
-
-
-
-References:
-
-IPUMS Health Surveys, Minnesota Population Center. (2022). NHIS data (accessed via course GitHub).
-
+---
